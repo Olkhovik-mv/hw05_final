@@ -1,0 +1,28 @@
+{% extends 'base.html' %}
+{% block title %}
+  {% if follow %}Подписки{% else %}Последние обновления на сайте{% endif %} 
+{% endblock %}
+{% block content %}
+  {% include 'includes/switcher.html' %}
+  <main>
+    <div class="container py-5">
+      <h1>
+        {% if follow %}
+          Подписки
+        {% else %}
+          Последние обновления на сайте
+        {% endif %}
+      </h1>
+      {% for post in page_obj %}
+        {% include 'includes/post_card.html' %}
+        {% if post.group %}
+          <a href="{% url 'posts:group_list' post.group.slug %}">
+            все записи группы
+          </a>
+        {% endif %}
+        {% if not forloop.last %}<hr>{% endif %}
+      {% endfor %}
+      {% include 'includes/paginator.html' %}
+    </div>
+  </main>
+{% endblock %}
