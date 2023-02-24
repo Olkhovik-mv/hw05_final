@@ -9,7 +9,22 @@ from django.urls import reverse
 from posts.models import Group, Post, User
 
 TEMP_MEDIA_ROOT = tempfile.mkdtemp(dir=settings.BASE_DIR)
-POST_ID = 1
+
+AUTHOR_USER = 'author_user'
+
+CREATE_URL = reverse('posts:post_create')
+EDIT_NAME = 'posts:post_edit'
+DETAIL_NAME = 'posts:post_detail'
+COMMENT_NAME = 'posts:add_comment'
+
+SMALL_GIF = (
+    b'\x47\x49\x46\x38\x39\x61\x02\x00'
+    b'\x01\x00\x80\x00\x00\x00\x00\x00'
+    b'\xFF\xFF\xFF\x21\xF9\x04\x00\x00'
+    b'\x00\x00\x00\x2C\x00\x00\x00\x00'
+    b'\x02\x00\x01\x00\x00\x02\x02\x0C'
+    b'\x0A\x00\x3B'
+)
 
 
 @override_settings(MEDIA_ROOT=TEMP_MEDIA_ROOT)
@@ -17,17 +32,16 @@ class PostsFormTest(TestCase):
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
-        cls.author = User.objects.create_user(username='author_user')
+        cls.author = User.objects.create_user(username=AUTHOR_USER)
         cls.group = Group.objects.create(
             title='тестовая группа',
             slug='test_slug',
             description='Тестовое описание'
         )
-        cls.post_db = Post.objects.create(
-            id=POST_ID,
+        cls.post = Post.objects.create(
             text='Тестовый текст',
-            group=PostsFormTest.group,
-            author=PostsFormTest.author
+            group=cls.group,
+            author=cls.author
         )
 
     @classmethod
@@ -38,30 +52,19 @@ class PostsFormTest(TestCase):
     def setUp(self):
         self.guest_client = Client()
         self.author_client = Client()
-        self.author_client.force_login(PostsFormTest.author)
+        self.author_client.force_login(self.author)
 
     def test_post_create(self):
         """При отправке валидной формы создается запись в Post"""
-        small_gif = (
-            b'\x47\x49\x46\x38\x39\x61\x02\x00'
-            b'\x01\x00\x80\x00\x00\x00\x00\x00'
-            b'\xFF\xFF\xFF\x21\xF9\x04\x00\x00'
-            b'\x00\x00\x00\x2C\x00\x00\x00\x00'
-            b'\x02\x00\x01\x00\x00\x02\x02\x0C'
-            b'\x0A\x00\x3B'
-        )
-        uploaded = SimpleUploadedFile(
-            name='small.gif',
-            content=small_gif,
-            content_type='image/gif'
-        )
         form_data = {
             'text': 'Текст из формы',
-            'group': PostsFormTest.group.id,
-            'image': uploaded
+            'group': self.group.id,
+            'image': SimpleUploadedFile(
+                name='small.gif', content=SMALL_GIF, content_type='image/gif'
+            )
         }
         posts_count = Post.objects.count()
-        self.author_client.post(reverse('posts:post_create'), data=form_data)
+        self.author_client.post(CREATE_URL, data=form_data)
         self.assertEqual(
             Post.objects.count(), posts_count + 1, 'запись не добавлена'
         )
@@ -77,60 +80,51 @@ class PostsFormTest(TestCase):
 
     def test_post_edit(self):
         """При отправке валидной формы изменяется запись в Post"""
-        post_db = PostsFormTest.post_db
         posts_count = Post.objects.count()
         form_data = {
             'text': 'Измененный в форме текст',
-            'group': PostsFormTest.group.id
+            'group': self.group.id
         }
         self.author_client.post(
-            reverse('posts:post_edit', kwargs={'post_id': POST_ID}),
+            reverse(EDIT_NAME, kwargs={'post_id': self.post.id}),
             data=form_data
         )
         self.assertEqual(
             Post.objects.count(), posts_count,
             'после редактирования поста изменилось число записей в базе данных'
         )
-        post_get = Post.objects.get(id=POST_ID)
+        post = Post.objects.get(id=self.post.id)
         self.assertEqual(
-            post_get.text, form_data['text'],
+            post.text, form_data['text'],
             'поле "text" в базе не соответствует тексту, отправленному в форме'
         )
         self.assertEqual(
-            post_get.group.id, form_data['group'],
+            post.group.id, form_data['group'],
             'поле "group" в базе не равно значению, отправленному в форме'
         )
         self.assertEqual(
-            post_get.author, post_db.author,
+            post.author, self.post.author,
             'после отправки формы изменилось значение author'
         )
 
     def test_post_add_comments(self):
         """При отправке формы авторизованным пользователем cоздается коммент"""
-        add_comment = reverse('posts:add_comment', kwargs={'post_id': POST_ID})
-        post_db = PostsFormTest.post_db
+        comment_url = reverse(COMMENT_NAME, kwargs={'post_id': self.post.id})
         form_comment = {'text': 'Тестовый комментарий'}
-        comments_count = post_db.comments.count()
-        self.author_client.post(add_comment, data=form_comment)
+        comments_count = self.post.comments.count()
+        self.author_client.post(comment_url, data=form_comment)
         self.assertEqual(
-            comments_count + 1, post_db.comments.count(),
+            comments_count + 1, self.post.comments.count(),
             'комментарий авторизованного пользователя не добавлен'
         )
-        self.guest_client.post(add_comment, data=form_comment)
+        self.guest_client.post(comment_url, data=form_comment)
         self.assertEqual(
-            comments_count + 1, post_db.comments.count(),
+            comments_count + 1, self.post.comments.count(),
             'неавторизованный пользователь не может добавлять комментарии'
         )
         # комментарий добавлен на страницу поста
-        response = self.guest_client.get(
-            reverse('posts:post_detail', kwargs={'post_id': POST_ID})
-        )
-        comments_list = response.context.get('comments')
-        self.assertIsNotNone(
-            comments_list, '"comments" не передан в контекст страницы'
-        )
-        comments = comments_list.filter(text=form_comment['text'])
-        self.assertTrue(
-            comments.exists(),
-            'добавленный комментарий не отображается на странице поста'
+        self.assertIn(
+            form_comment['text'], self.guest_client.get(
+                reverse(DETAIL_NAME, kwargs={'post_id': self.post.id})
+            ).content.decode('utf-8')
         )

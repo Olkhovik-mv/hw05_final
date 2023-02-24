@@ -13,53 +13,51 @@ POSTS_ON_PAGE = 10
 # Главная страница
 @cache_page(20, key_prefix='index_page')
 def index(request):
-    post_list = Post.objects.select_related('group', 'author').all()
-    page_obj = get_page_obj(post_list, POSTS_ON_PAGE, request)
-    context = {'page_obj': page_obj}
-    template = 'posts/index.html'
-    return render(request, template, context)
+    return render(request, 'posts/index.html', {
+        'page_obj': get_page_obj(
+            Post.objects.select_related('group', 'author').all(),
+            POSTS_ON_PAGE, request
+        ),
+        'index': True
+    }
+    )
 
 
 # Посты, отфильтрованные по группам
 def group_posts(request, slug):
     group = get_object_or_404(Group, slug=slug)
-    post_list = group.posts.select_related('author').all()
-    page_obj = get_page_obj(post_list, POSTS_ON_PAGE, request)
-    context = {
+    return render(request, 'posts/group_list.html', {
         'group': group,
-        'page_obj': page_obj,
+        'page_obj': get_page_obj(
+            group.posts.select_related('author').all(), POSTS_ON_PAGE, request
+        )
     }
-    template = 'posts/group_list.html'
-    return render(request, template, context)
+    )
 
 
 # Персональная страница пользователя
 def profile(request, username):
     author = get_object_or_404(User, username=username)
-    user = request.user
-    following = False
-    if isinstance(user, User):
-        if author.following.filter(user=user):
-            following = True
-    author_posts = author.posts.select_related('group').all()
-    page_obj = get_page_obj(author_posts, POSTS_ON_PAGE, request)
-    context = {
+    return render(request, 'posts/profile.html', {
         'author': author,
-        'page_obj': page_obj,
-        'following': following,
+        'page_obj': get_page_obj(
+            author.posts.select_related('group').all(), POSTS_ON_PAGE, request
+        ),
+        'following': request.user.is_authenticated
+        and request.user.username != username
+        and author.following.filter(user=request.user)
     }
-    template = 'posts/profile.html'
-    return render(request, template, context)
+    )
 
 
 # Страница поста
 def post_detail(request, post_id):
     post = get_object_or_404(Post, id=post_id)
-    comments = post.comments.select_related('author').all()
-    form = CommentForm()
-    context = {'post': post, 'comments': comments, 'form': form}
-    template = 'posts/post_detail.html'
-    return render(request, template, context)
+    return render(request, 'posts/post_detail.html', {
+        'post': post,
+        'form': CommentForm()
+    }
+    )
 
 
 # Новый пост
@@ -70,31 +68,30 @@ def post_create(request):
         files=request.FILES or None
     )
     if not form.is_valid():
-        template = 'posts/create_post.html'
-        context = {'form': form}
-        return render(request, template, context)
+        return render(request, 'posts/create_post.html', {'form': form})
     post = form.save(commit=False)
     post.author = request.user
     post.save()
-    return redirect(f'/profile/{post.author.username}/')
+    return redirect('posts:profile', username=request.user.username)
 
 
 # Редактирование поста
 def post_edit(request, post_id):
     post = get_object_or_404(Post, id=post_id)
     if post.author != request.user:
-        return redirect(f'/posts/{post_id}/')
+        return redirect('posts:post_detail', post_id=post_id)
     form = PostForm(
         request.POST or None,
         files=request.FILES or None,
         instance=post
     )
     if not form.is_valid():
-        template = 'posts/create_post.html'
-        context = {'is_edit': True, 'post_id': post_id, 'form': form}
-        return render(request, template, context)
+        return render(request, 'posts/create_post.html', {
+            'is_edit': True, 'post_id': post_id, 'form': form
+        }
+        )
     form.save()
-    return redirect(f'/posts/{post_id}/')
+    return redirect('posts:post_detail', post_id=post_id)
 
 
 # Обработка комментария
@@ -113,32 +110,30 @@ def add_comment(request, post_id):
 # Посты избранных авторов
 @login_required
 def follow_index(request):
-    user = request.user
-    follow_qs = user.follower.all()
-    author_list = [user.author for user in follow_qs]
-    post_list = (
-        Post.objects.select_related('group', 'author')
-        .filter(author__in=author_list)
+    return render(request, 'posts/index.html', {
+        'page_obj': get_page_obj(
+            Post.objects.select_related('group', 'author')
+            .filter(author__following__user=request.user),
+            POSTS_ON_PAGE, request
+        ),
+        'follow': True
+    }
     )
-    page_obj = get_page_obj(post_list, POSTS_ON_PAGE, request)
-    context = {'page_obj': page_obj, 'follow': True}
-    return render(request, 'posts/index.html', context)
 
 
 # Подписаться
 @login_required
 def profile_follow(request, username):
-    user = request.user
-    author = User.objects.get(username=username)
-    if user != author:
-        Follow.objects.get_or_create(user=user, author=author)
+    if request.user.username != username:
+        author = get_object_or_404(User, username=username)
+        Follow.objects.get_or_create(user=request.user, author=author)
     return redirect('posts:profile', username=username)
 
 
 # Отписаться
 @login_required
 def profile_unfollow(request, username):
-    user = request.user
-    author = User.objects.get(username=username)
-    user.follower.filter(author=author).delete()
+    get_object_or_404(
+        Follow, user=request.user, author__username=username
+    ).delete()
     return redirect('posts:index')

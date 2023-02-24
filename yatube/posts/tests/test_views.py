@@ -14,20 +14,33 @@ from posts.models import Group, Post, User
 TEMP_MEDIA_ROOT = tempfile.mkdtemp(dir=settings.BASE_DIR)
 
 POST_ID = 1
+
 USERNAME = 'username_1'
 USERNAME_2 = 'username_2'
 GROUP_SLUG = 'slug_group_1'
 GROUP_2_SLUG = 'slug_group_2'
 PAGE_2 = '?page=2'
 
-INDEX = reverse('posts:index')
-GROUP_LIST = reverse('posts:group_list', kwargs={'slug': GROUP_SLUG})
-GROUP_2_LIST = reverse('posts:group_list', kwargs={'slug': GROUP_2_SLUG})
-PROFILE = reverse('posts:profile', kwargs={'username': USERNAME})
-PROFILE_2 = reverse('posts:profile', kwargs={'username': USERNAME_2})
-DETAIL = reverse('posts:post_detail', kwargs={'post_id': POST_ID})
-CREATE = reverse('posts:post_create')
-EDIT = reverse('posts:post_edit', kwargs={'post_id': POST_ID})
+INDEX_URL = reverse('posts:index')
+GROUP_LIST_URL = reverse('posts:group_list', kwargs={'slug': GROUP_SLUG})
+GROUP_2_LIST_URL = reverse('posts:group_list', kwargs={'slug': GROUP_2_SLUG})
+PROFILE_URL = reverse('posts:profile', kwargs={'username': USERNAME})
+PROFILE_2_URL = reverse('posts:profile', kwargs={'username': USERNAME_2})
+DETAIL_URL = reverse('posts:post_detail', kwargs={'post_id': POST_ID})
+CREATE_URL = reverse('posts:post_create')
+EDIT_URL = reverse('posts:post_edit', kwargs={'post_id': POST_ID})
+FOLLOW_INDEX_URL = reverse('posts:follow_index')
+FOLLOW_URL = reverse('posts:profile_follow', kwargs={'username': USERNAME})
+UNFOLLOW_URL = reverse('posts:profile_unfollow', kwargs={'username': USERNAME})
+
+SMALL_GIF = (
+    b'\x47\x49\x46\x38\x39\x61\x02\x00'
+    b'\x01\x00\x80\x00\x00\x00\x00\x00'
+    b'\xFF\xFF\xFF\x21\xF9\x04\x00\x00'
+    b'\x00\x00\x00\x2C\x00\x00\x00\x00'
+    b'\x02\x00\x01\x00\x00\x02\x02\x0C'
+    b'\x0A\x00\x3B'
+)
 
 
 @override_settings(MEDIA_ROOT=TEMP_MEDIA_ROOT)
@@ -49,8 +62,6 @@ class PostsContextTest(TestCase):
         )
         # Создаем 13 записей в базе:
         # 11 записей (автор_1, группа_1); 2 записи (автор_2, группа_2)
-        # Присваиваем индексы модели Post для возможности обновления
-        # записей методом bulk_update
         obj_list = [
             Post(id=i + 1, text=f'{i} тестовый текст',
                  author=cls.user_1, group=cls.group_1) if i < 11 else
@@ -61,21 +72,11 @@ class PostsContextTest(TestCase):
         for i, post in enumerate(obj_list):
             post.pub_date = datetime.now() + timedelta(hours=i)
         Post.objects.bulk_update(obj_list, ['pub_date'])
-        small_gif = (
-            b'\x47\x49\x46\x38\x39\x61\x02\x00'
-            b'\x01\x00\x80\x00\x00\x00\x00\x00'
-            b'\xFF\xFF\xFF\x21\xF9\x04\x00\x00'
-            b'\x00\x00\x00\x2C\x00\x00\x00\x00'
-            b'\x02\x00\x01\x00\x00\x02\x02\x0C'
-            b'\x0A\x00\x3B'
-        )
-        uploaded = SimpleUploadedFile(
-            name='small.gif',
-            content=small_gif,
-            content_type='image/gif'
-        )
+
         post = Post.objects.get(id=POST_ID)
-        post.image = uploaded
+        post.image = SimpleUploadedFile(
+            name='small.gif', content=SMALL_GIF, content_type='image/gif'
+        )
         post.save()
 
     @classmethod
@@ -85,68 +86,82 @@ class PostsContextTest(TestCase):
 
     def setUp(self):
         self.client = Client()
-        self.client.force_login(PostsContextTest.user_1)
+        self.client.force_login(self.user_1)
+        self.client_follower = Client()
+        self.client_follower.force_login(self.user_2)
         cache.clear()
 
     def test_paginator(self):
         """Paginator выводит по 10 записей на страницу"""
         # (URL, число записей на странице)
-        urls = [
-            (INDEX, 10),
-            (INDEX + PAGE_2, 3),
-            (GROUP_LIST, 10),
-            (GROUP_LIST + PAGE_2, 1),
-            (PROFILE, 10),
-            (PROFILE + PAGE_2, 1),
-        ]
+        urls = (
+            (INDEX_URL, 10),
+            (INDEX_URL + PAGE_2, 3),
+            (GROUP_LIST_URL, 10),
+            (GROUP_LIST_URL + PAGE_2, 1),
+            (PROFILE_URL, 10),
+            (PROFILE_URL + PAGE_2, 1),
+        )
         for url, pages in urls:
             with self.subTest(url=url):
-                response = self.client.get(url)
                 self.assertEqual(
-                    len(response.context['page_obj'].object_list), pages,
+                    len(self.client.get(url).context['page_obj'].object_list),
+                    pages,
                     'Неправильно работает паджинатор'
                 )
 
     def page_obj_check(self, url, post_list):
         """Функция проверки объекта контекста page_obj"""
-        response = self.client.get(url)
-        page_obj_list = response.context['page_obj'].paginator.object_list
-        for post_db, post_get in zip(
+        page_obj_list = (
+            self.client.get(url).context['page_obj'].paginator.object_list
+        )
+        for post, post_get in zip(
                 post_list.values(), page_obj_list.values()):
             with self.subTest():
-                self.assertEqual(post_db, post_get)
+                self.assertEqual(post, post_get)
 
     def model_obj_check(self, url, inst, obj_db):
         """Функция проверки объектов моделей, переданных в context"""
-        response = self.client.get(url)
-        obj_get = response.context.get(inst)
         for key in obj_db:
             with self.subTest(fild=key):
-                self.assertEqual(obj_db[key], getattr(obj_get, key))
+                self.assertEqual(
+                    obj_db[key],
+                    getattr(self.client.get(url).context.get(inst), key))
 
     def test_index_page_show_correct_context(self):
         """Шаблон index сформирован с правильным контекстом"""
-        post_list = Post.objects.all().order_by('-pub_date')
-        self.page_obj_check(INDEX, post_list)
+        self.page_obj_check(
+            INDEX_URL, Post.objects.all().order_by('-pub_date')
+        )
 
     def test_group_list_page_show_correct_context(self):
         """Шаблон group_list сформирован с правильным контекстом"""
-        post_list = Post.objects.filter(group=1).order_by('-pub_date')
-        self.page_obj_check(GROUP_LIST, post_list)
-        group_db = Group.objects.filter(slug=GROUP_SLUG).values().first()
-        self.model_obj_check(GROUP_LIST, 'group', group_db)
+        self.page_obj_check(
+            GROUP_LIST_URL, Post.objects.filter(group=1).order_by('-pub_date')
+        )
+        self.model_obj_check(
+            GROUP_LIST_URL,
+            'group',
+            Group.objects.filter(slug=GROUP_SLUG).values().first()
+        )
 
     def test_profile_page_show_correct_context(self):
         """Шаблон profile сформирован с правильным контекстом"""
-        post_list = Post.objects.filter(author=1).order_by('-pub_date')
-        self.page_obj_check(PROFILE, post_list)
-        author_db = User.objects.filter(username=USERNAME).values().first()
-        self.model_obj_check(PROFILE, 'author', author_db)
+        self.page_obj_check(
+            PROFILE_URL, Post.objects.filter(author=1).order_by('-pub_date')
+        )
+        self.model_obj_check(
+            PROFILE_URL,
+            'author',
+            User.objects.filter(username=USERNAME).values().first()
+        )
 
     def test_post_detail_page_show_correct_context(self):
         """Шаблон post_detail сформирован с правильным контекстом"""
-        post_db = Post.objects.filter(id=POST_ID).values().first()
-        self.model_obj_check(DETAIL, 'post', post_db)
+        self.model_obj_check(
+            DETAIL_URL, 'post',
+            Post.objects.filter(id=POST_ID).values().first()
+        )
 
     def test_new_post_show_in_pages(self):
         """Созданный пост отображается на главной странице,
@@ -157,25 +172,29 @@ class PostsContextTest(TestCase):
             group=PostsContextTest.group_2,
         )
         # Новый пост отображается на страницах
-        url_list = [INDEX, GROUP_2_LIST, PROFILE_2]
+        url_list = [INDEX_URL, GROUP_2_LIST_URL, PROFILE_2_URL]
         for url in url_list:
             with self.subTest(url=url):
-                response = self.client.get(url)
-                obj_list = response.context['page_obj'].paginator.object_list
-                self.assertIn(new_post, obj_list)
+                self.assertIn(
+                    new_post,
+                    self.client.get(url)
+                    .context['page_obj'].paginator.object_list
+                )
 
         # Новый пост не отображается на страницах
-        url_list = [GROUP_LIST, PROFILE]
+        url_list = [GROUP_LIST_URL, PROFILE_URL]
         for url in url_list:
             with self.subTest(url=url):
-                response = self.client.get(url)
-                obj_list = response.context['page_obj'].paginator.object_list
-                self.assertNotIn(new_post, obj_list)
+                self.assertNotIn(
+                    new_post,
+                    self.client.get(url)
+                    .context['page_obj'].paginator.object_list
+                )
 
     def test_create_post_page_show_correct_context(self):
         """Шаблон create_post сформирован с правильным контекстом."""
         # Страницы, использующие шаблон create_post
-        urls = [CREATE, EDIT]
+        urls = [CREATE_URL, EDIT_URL]
         form_fields = {
             'text': forms.fields.CharField,
             'group': forms.models.ModelChoiceField,
@@ -183,28 +202,69 @@ class PostsContextTest(TestCase):
         }
         for url in urls:
             with self.subTest(page=url):
-                response = self.client.get(url)
                 for field, expected in form_fields.items():
                     with self.subTest(field=field):
                         form_field = (
-                            response.context.get('form').fields.get(field)
+                            self.client.get(url)
+                            .context.get('form').fields.get(field)
                         )
                         self.assertIsInstance(form_field, expected)
 
     def test_index_page_cache(self):
         """Список постов главной страницы хранится в кэше"""
-        response = self.client.get(INDEX)
-        index_content = response.content
-
+        index_content = self.client.get(INDEX_URL).content
         Post.objects.all().delete()
-        response = self.client.get(INDEX)
         self.assertEqual(
-            index_content, response.content,
+            index_content, self.client.get(INDEX_URL).content,
             'страница не сохраняется в кэше'
         )
         cache.clear()
-        response = self.client.get(INDEX)
         self.assertNotEqual(
-            index_content, response.content,
+            index_content, self.client.get(INDEX_URL).content,
             'после очистки кэша страница доступна'
+        )
+
+    def test_follow_index_page(self):
+        """Новая запись автора появляется в ленте подписчиков"""
+        self.client_follower.get(FOLLOW_URL)
+        new_post = Post.objects.create(
+            text='Текст новой записи',
+            author=self.user_1
+        )
+        self.assertIn(
+            new_post,
+            self.client_follower.get(FOLLOW_INDEX_URL)
+            .context['page_obj'].paginator.object_list,
+            'новая запись не появляется в ленте подписчика'
+        )
+        self.assertNotIn(
+            new_post,
+            self.client.get(FOLLOW_INDEX_URL)
+            .context['page_obj'].paginator.object_list,
+            'новая запись не должна быть в ленте тех, кто не подписан'
+        )
+
+
+class PostsFollowTest(TestCase):
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.author = User.objects.create_user(username=USERNAME)
+        cls.user = User.objects.create_user(username=USERNAME_2)
+
+    def setUp(self):
+        self.client = Client()
+        self.client.force_login(self.user)
+
+    def test_follow_unfollow(self):
+        """Авторизованный пользователь может подписаться на автора"""
+        self.client.get(FOLLOW_URL)
+        self.assertTrue(
+            self.user.follower.filter(author=self.author).exists(),
+            'подписка на автора не создана'
+        )
+        self.client.get(UNFOLLOW_URL)
+        self.assertFalse(
+            self.user.follower.filter(author=self.author).exists(),
+            'подписка на автора не удалена'
         )
