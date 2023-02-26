@@ -17,8 +17,7 @@ def index(request):
         'page_obj': get_page_obj(
             Post.objects.select_related('group', 'author').all(),
             POSTS_ON_PAGE, request
-        ),
-        'index': True
+        )
     }
     )
 
@@ -116,7 +115,6 @@ def follow_index(request):
             .filter(author__following__user=request.user),
             POSTS_ON_PAGE, request
         ),
-        'follow': True
     }
     )
 

@@ -42,9 +42,8 @@ class PostsURLTest(TestCase):
             group=cls.group,
             author=cls.author
         )
-        global DETAIL_URL, EDIT_URL
-        DETAIL_URL = reverse(DETAIL_NAME, kwargs={'post_id': cls.post.id})
-        EDIT_URL = reverse(EDIT_NAME, kwargs={'post_id': cls.post.id})
+        cls.DETAIL_URL = reverse(DETAIL_NAME, kwargs={'post_id': cls.post.id})
+        cls.EDIT_URL = reverse(EDIT_NAME, kwargs={'post_id': cls.post.id})
 
     def setUp(self):
         self.guest_client = Client()
@@ -56,7 +55,7 @@ class PostsURLTest(TestCase):
 
     def test_posts_pages_available_to_all(self):
         """Страница доступна любому пользователю"""
-        urls = (INDEX_URL, GROUP_LIST_URL, PROFILE_URL, DETAIL_URL)
+        urls = (INDEX_URL, GROUP_LIST_URL, PROFILE_URL, self.DETAIL_URL)
         for url in urls:
             with self.subTest(url=url):
                 self.assertEqual(
@@ -72,13 +71,14 @@ class PostsURLTest(TestCase):
     def test_posts_id_edit_page_available_to_author(self):
         """Страница /posts/<post_id>/edit/ доступна автору поста"""
         self.assertEqual(
-            self.author_client.get(EDIT_URL).status_code, HTTPStatus.OK
+            self.author_client.get(self.EDIT_URL).status_code, HTTPStatus.OK
         )
 
     def test_posts_id_edit_page_redirect_authorized_to_posts_id(self):
         """Страница /posts/<post_id>/edit/ перенаправит на страницу поста"""
         self.assertRedirects(
-            self.authorized_client.get(EDIT_URL, follow=True), DETAIL_URL
+            self.authorized_client.get(self.EDIT_URL, follow=True),
+            self.DETAIL_URL
         )
 
     def test_create_page_redirect_guest_to_login(self):
@@ -99,8 +99,8 @@ class PostsURLTest(TestCase):
             (INDEX_URL, INDEX_TEMPL),
             (GROUP_LIST_URL, CROUP_LIST_TEMPL),
             (PROFILE_URL, PROFILE_TEMPL),
-            (DETAIL_URL, DETAIL_TEMPL),
-            (EDIT_URL, CREATE_TEMPL),
+            (self.DETAIL_URL, DETAIL_TEMPL),
+            (self.EDIT_URL, CREATE_TEMPL),
             (CREATE_URL, CREATE_TEMPL),
             (PAGE_404, CORE_404_TEMPL)
         )

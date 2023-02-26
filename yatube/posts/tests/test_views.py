@@ -9,11 +9,9 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import Client, TestCase, override_settings
 from django.urls import reverse
 
-from posts.models import Group, Post, User
+from posts.models import Comment, Group, Post, User
 
 TEMP_MEDIA_ROOT = tempfile.mkdtemp(dir=settings.BASE_DIR)
-
-POST_ID = 1
 
 USERNAME = 'username_1'
 USERNAME_2 = 'username_2'
@@ -26,9 +24,7 @@ GROUP_LIST_URL = reverse('posts:group_list', kwargs={'slug': GROUP_SLUG})
 GROUP_2_LIST_URL = reverse('posts:group_list', kwargs={'slug': GROUP_2_SLUG})
 PROFILE_URL = reverse('posts:profile', kwargs={'username': USERNAME})
 PROFILE_2_URL = reverse('posts:profile', kwargs={'username': USERNAME_2})
-DETAIL_URL = reverse('posts:post_detail', kwargs={'post_id': POST_ID})
 CREATE_URL = reverse('posts:post_create')
-EDIT_URL = reverse('posts:post_edit', kwargs={'post_id': POST_ID})
 FOLLOW_INDEX_URL = reverse('posts:follow_index')
 FOLLOW_URL = reverse('posts:profile_follow', kwargs={'username': USERNAME})
 UNFOLLOW_URL = reverse('posts:profile_unfollow', kwargs={'username': USERNAME})
@@ -63,21 +59,29 @@ class PostsContextTest(TestCase):
         # Создаем 13 записей в базе:
         # 11 записей (автор_1, группа_1); 2 записи (автор_2, группа_2)
         obj_list = [
-            Post(id=i + 1, text=f'{i} тестовый текст',
+            Post(text=f'{i} тестовый текст',
                  author=cls.user_1, group=cls.group_1) if i < 11 else
-            Post(id=i + 1, text=f'{i} тестовый текст',
+            Post(text=f'{i} тестовый текст',
                  author=cls.user_2, group=cls.group_2) for i in range(13)
         ]
         Post.objects.bulk_create(obj_list, 13)
-        for i, post in enumerate(obj_list):
+        obj_to_update = []
+        for i, post in enumerate(Post.objects.all().order_by('id')):
             post.pub_date = datetime.now() + timedelta(hours=i)
-        Post.objects.bulk_update(obj_list, ['pub_date'])
+            obj_to_update.append(post)
+        Post.objects.bulk_update(obj_to_update, ['pub_date'])
 
-        post = Post.objects.get(id=POST_ID)
+        cls.post = Post.objects.all().order_by('id')[0]
         post.image = SimpleUploadedFile(
             name='small.gif', content=SMALL_GIF, content_type='image/gif'
         )
         post.save()
+        cls.DETAIL_URL = reverse(
+            'posts:post_detail', kwargs={'post_id': cls.post.id}
+        )
+        cls.EDIT_URL = reverse(
+            'posts:post_edit', kwargs={'post_id': cls.post.id}
+        )
 
     @classmethod
     def tearDownClass(cls):
@@ -159,8 +163,8 @@ class PostsContextTest(TestCase):
     def test_post_detail_page_show_correct_context(self):
         """Шаблон post_detail сформирован с правильным контекстом"""
         self.model_obj_check(
-            DETAIL_URL, 'post',
-            Post.objects.filter(id=POST_ID).values().first()
+            self.DETAIL_URL, 'post',
+            Post.objects.filter(id=self.post.id).values().first()
         )
 
     def test_new_post_show_in_pages(self):
@@ -191,10 +195,20 @@ class PostsContextTest(TestCase):
                     .context['page_obj'].paginator.object_list
                 )
 
+    def test_comment_show_in_post_detail(self):
+        """Комментарий отображается на странице поста"""
+        comment = 'Тестовый комментарий'
+        Comment.objects.create(
+            post=self.post, author=self.user_1, text=comment
+        )
+        self.assertIn(
+            comment, self.client.get(self.DETAIL_URL).content.decode('utf-8')
+        )
+
     def test_create_post_page_show_correct_context(self):
         """Шаблон create_post сформирован с правильным контекстом."""
         # Страницы, использующие шаблон create_post
-        urls = [CREATE_URL, EDIT_URL]
+        urls = [CREATE_URL, self.EDIT_URL]
         form_fields = {
             'text': forms.fields.CharField,
             'group': forms.models.ModelChoiceField,

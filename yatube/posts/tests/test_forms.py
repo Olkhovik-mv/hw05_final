@@ -14,7 +14,6 @@ AUTHOR_USER = 'author_user'
 
 CREATE_URL = reverse('posts:post_create')
 EDIT_NAME = 'posts:post_edit'
-DETAIL_NAME = 'posts:post_detail'
 COMMENT_NAME = 'posts:add_comment'
 
 SMALL_GIF = (
@@ -68,9 +67,10 @@ class PostsFormTest(TestCase):
         self.assertEqual(
             Post.objects.count(), posts_count + 1, 'запись не добавлена'
         )
-        post = Post.objects.filter(text=form_data['text']).first()
-        self.assertTrue(
-            post, 'поле "text" в базе не соответствует отправленному в форме'
+        post = Post.objects.all().order_by('-id')[0]
+        self.assertEqual(
+            post.text, form_data['text'],
+            'поле "text" в базе не соответствует отправленному в форме'
         )
         self.assertEqual(
             post.group.id, form_data['group'],
@@ -83,7 +83,10 @@ class PostsFormTest(TestCase):
         posts_count = Post.objects.count()
         form_data = {
             'text': 'Измененный в форме текст',
-            'group': self.group.id
+            'group': self.group.id,
+            'image': SimpleUploadedFile(
+                name='new.gif', content=SMALL_GIF, content_type='image/gif'
+            )
         }
         self.author_client.post(
             reverse(EDIT_NAME, kwargs={'post_id': self.post.id}),
@@ -106,6 +109,7 @@ class PostsFormTest(TestCase):
             post.author, self.post.author,
             'после отправки формы изменилось значение author'
         )
+        self.assertEqual(post.image, 'posts/new.gif')
 
     def test_post_add_comments(self):
         """При отправке формы авторизованным пользователем cоздается коммент"""
@@ -121,10 +125,4 @@ class PostsFormTest(TestCase):
         self.assertEqual(
             comments_count + 1, self.post.comments.count(),
             'неавторизованный пользователь не может добавлять комментарии'
-        )
-        # комментарий добавлен на страницу поста
-        self.assertIn(
-            form_comment['text'], self.guest_client.get(
-                reverse(DETAIL_NAME, kwargs={'post_id': self.post.id})
-            ).content.decode('utf-8')
         )

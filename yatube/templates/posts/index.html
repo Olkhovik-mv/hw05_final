@@ -1,14 +1,18 @@
 {% extends 'base.html' %}
 {% block title %}
-  {% if follow %}Подписки{% else %}Последние обновления на сайте{% endif %} 
+  {% if request.resolver_match.view_name == 'posts:follow_index' %}
+    Подписки
+  {% else %}
+    Последние обновления на сайте
+  {% endif %} 
 {% endblock %}
 {% block content %}
-  {% include 'includes/switcher.html' with index=index follow=follow %} 
+  {% include 'includes/switcher.html' with view=request.resolver_match.view_name %} 
   <main>
     <div class="container py-5">
       <h1>
-        {% if follow %}
-          Подписки
+        {% if request.resolver_match.view_name == 'posts:follow_index' %}
+          Подписки 
         {% else %}
           Последние обновления на сайте
         {% endif %}
